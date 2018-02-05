@@ -13,6 +13,7 @@ use SFM\Entity;
 
 /**
  *  Class for work with daemons that use memcache protocol. Implements tags system for cache control
+ * TODO: implement nested transactions
  */
 class CacheProvider implements Value\ValueStorageStrategyInterface
 {

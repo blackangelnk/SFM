@@ -36,10 +36,10 @@ abstract class AbstractQueryBuilder
     protected function prepareParams()
     {
         if ($this->params) {
-            $i = 1;
-            // replace according to $1, $2, $3 notation
-            foreach ($this->params as $param => $_value) {
-                $this->sql = str_replace(':' . $param, '$' . $i++, $this->sql);
+            foreach ($this->params as $param => $value) {
+                if (is_bool($value)) {
+                    $this->params[$param] = (int) $value;
+                }
             }
         }
     }

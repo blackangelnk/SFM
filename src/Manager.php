@@ -102,7 +102,6 @@ class Manager extends Container
         $this['transaction_engines'] = function () {
             return [
                 $this->getDb(),
-                $this->getCache()->getAdapter(),
                 $this->getIdentityMap()
             ];
         };

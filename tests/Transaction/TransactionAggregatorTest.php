@@ -333,10 +333,12 @@ class TransactionAggregatorTest extends PHPUnit_Framework_TestCase
     {
         $transaction = new SFM\Transaction\TransactionAggregator();
 
-        $this->setExpectedException('SFM\Transaction\TransactionException', "Can't begin transaction while another one is running");
-
-        $transaction->beginTransaction();
-        $transaction->beginTransaction();
+        try {
+            $transaction->beginTransaction();
+            $transaction->beginTransaction();
+        } catch (\SFM\Transaction\TransactionException $exception) {
+            $this->fail("Failed to begin nested transaction ");
+        }
     }
 
     public function testCommitWithNoBegin()

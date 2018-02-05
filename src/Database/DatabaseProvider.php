@@ -5,6 +5,7 @@ use SFM\Transaction\TransactionException;
 use Zend\Db\Adapter\Adapter;
 use Zend\Db\Adapter\AdapterInterface;
 use Zend\Db\Adapter\Driver\Pgsql\Pgsql;
+use Zend\Db\Adapter\Platform\Postgresql;
 use Zend\Db\ResultSet\ResultSet;
 use Zend\Db\Adapter\Exception\ExceptionInterface;
 use SFM\Transaction\TransactionEngineInterface;
@@ -18,10 +19,10 @@ class DatabaseProvider implements TransactionEngineInterface
     protected $adapter = null;
 
     /**
-     * Current transaction status
-     * @var bool
+     * Current transaction depth
+     * @var int
      */
-    protected $isTransactionActive = false;
+    protected $transactionDepth = 0;
 
     /**
      * @param AdapterInterface $adapter
@@ -136,6 +137,13 @@ class DatabaseProvider implements TransactionEngineInterface
     public function query($sql, $vars = array())
     {
         try {
+            if ($this->getAdapter()->getDriver() instanceof Pgsql) {
+                $i = 1;
+                // replace according to $1, $2, $3 notation
+                foreach ($vars as $param => $_value) {
+                    $sql = str_replace(':' . $param, '$' . $i++, $sql);
+                }
+            }
             $result = $this->adapter->query($sql, $vars);
         } catch (ExceptionInterface $e) {
             throw new BaseException("Query error", 0, $e);
@@ -156,7 +164,7 @@ class DatabaseProvider implements TransactionEngineInterface
         $this->query($sql, $vars);
 
         $seqName = null;
-        if ($this->adapter->getDriver() instanceof Pgsql) {
+        if ($this->getAdapter()->getPlatform() instanceof Postgresql) {
             $seqName = $this->getPgSeqName($sql, $idFieldName);
         }
 
@@ -219,13 +227,9 @@ class DatabaseProvider implements TransactionEngineInterface
      */
     public function beginTransaction()
     {
-        if ($this->isTransactionActive === true) {
-            throw new TransactionException("Can't begin transaction while another one is running");
-        }
-
         try {
             $this->adapter->getDriver()->getConnection()->beginTransaction();
-            $this->isTransactionActive = true;
+            $this->transactionDepth++;
         } catch (\Exception $e) {
             throw new TransactionException('Can`t begin transaction', 0, $e);
         }
@@ -236,7 +240,7 @@ class DatabaseProvider implements TransactionEngineInterface
      */
     public function isTransaction()
     {
-        return $this->isTransactionActive;
+        return $this->transactionDepth > 0;
     }
 
     /**
@@ -244,13 +248,13 @@ class DatabaseProvider implements TransactionEngineInterface
      */
     public function commitTransaction()
     {
-        if ($this->isTransactionActive === false) {
+        if (!$this->isTransaction()) {
             throw new TransactionException("Can't commit transaction while no one is running");
         }
 
         try {
             $this->adapter->getDriver()->getConnection()->commit();
-            $this->isTransactionActive = false;
+            $this->transactionDepth--;
         } catch (\Exception $e) {
             throw new TransactionException('Can`t commit transaction', 0, $e);
         }
@@ -261,13 +265,13 @@ class DatabaseProvider implements TransactionEngineInterface
      */
     public function rollbackTransaction()
     {
-        if ($this->isTransactionActive === false) {
+        if (!$this->isTransaction()) {
             throw new TransactionException("Can't rollback transaction while no one is running");
         }
 
         try {
             $this->adapter->getDriver()->getConnection()->rollBack();
-            $this->isTransactionActive = false;
+            $this->transactionDepth--;
         } catch (\Exception $e) {
             throw new TransactionException("Can`t rollback transaction", 0, $e);
         }

@@ -60,11 +60,6 @@ class IdentityMapTest extends PHPUnit_Framework_TestCase
         $storage2 = $this->getMockBuilder('SFM\IdentityMap\IdentityMapStorage')
             ->getMock();
 
-        $storage2->expects($this->once())
-            ->method('getM')
-            ->with('SampleEntity')
-            ->willReturn([]);
-
         $im = new IdentityMap($storage, $storage1, $storage2);
 
         $storage->expects($this->once())

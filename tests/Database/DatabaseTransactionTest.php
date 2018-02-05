@@ -82,14 +82,17 @@ class DatabaseTransactionTest extends PHPUnit_Framework_TestCase
             ->method('getConnection')
             ->willReturn($connection);
 
-        $connection->expects($this->once())
+        $connection->expects($this->exactly(2))
             ->method('beginTransaction');
 
-        $this->setExpectedException('SFM\Transaction\TransactionException', "Can't begin transaction while another one is running");
-
         $t = new DatabaseProvider($adapter);
-        $t->beginTransaction();
-        $t->beginTransaction();
+
+        try {
+            $t->beginTransaction();
+            $t->beginTransaction();
+        } catch (\SFM\Transaction\TransactionException $exception) {
+            $this->fail("Failed to begin nested transaction ");
+        }
     }
 
     public function testCommit()
@@ -158,7 +161,7 @@ class DatabaseTransactionTest extends PHPUnit_Framework_TestCase
             ->method('beginTransaction');
 
         $connection->expects($this->at(1))
-            ->method('rollbackTransaction');
+            ->method('rollback');
 
         $t = new DatabaseProvider($adapter);
         $t->beginTransaction();
@@ -180,7 +183,7 @@ class DatabaseTransactionTest extends PHPUnit_Framework_TestCase
             ->willReturn($connection);
 
         $connection->expects($this->never())
-            ->method('rollbackTransaction');
+            ->method('rollback');
 
         $this->setExpectedException('SFM\Transaction\TransactionException', "Can't rollback transaction while no one is running");
 

@@ -11,7 +11,11 @@ use SFM\Transaction\TransactionException;
 class IdentityMap implements IdentityMapInterface, TransactionEngineInterface
 {
     protected $isEnabled = true;
-    protected $isTransaction = false;
+
+    /**
+     * @var int
+     */
+    protected $transactionDepth = 0;
 
     /** @var IdentityMapStorageInterface  */
     protected $storage;
@@ -21,6 +25,12 @@ class IdentityMap implements IdentityMapInterface, TransactionEngineInterface
 
     /** @var IdentityMapStorageInterface */
     protected $transactionRemoveStorage;
+
+    /** @var IdentityMapStorageInterface[] */
+    protected $transactionAddStoragesContainer;
+
+    /** @var IdentityMapStorageInterface[] */
+    protected $transactionRemoveStoragesContainer;
 
     /**
      * @param IdentityMapStorageInterface $storage
@@ -46,8 +56,8 @@ class IdentityMap implements IdentityMapInterface, TransactionEngineInterface
         if ($this->isEnabled) {
 
             if ($this->isTransaction()) {
-                $this->transactionAddStorage->put($entity);
-                $this->transactionRemoveStorage->remove(get_class($entity), $entity->getId());
+                $this->transactionAddStoragesContainer[$this->transactionDepth - 1]->put($entity);
+                $this->transactionRemoveStoragesContainer[$this->transactionDepth - 1]->remove(get_class($entity), $entity->getId());
             } else {
                 $this->storage->put($entity);
             }
@@ -71,10 +81,17 @@ class IdentityMap implements IdentityMapInterface, TransactionEngineInterface
 
         $entity = null;
         if ($this->isTransaction()) {
-            $entity = $this->transactionAddStorage->get($className, $id);
+            for ($depth = $this->transactionDepth; $depth > 0; $depth--) {
+                $entity = $this->transactionAddStoragesContainer[$depth - 1]->get($className, $id);
+                if ($this->transactionRemoveStoragesContainer[$depth - 1]->get($className, $id)) {
+                    return null;
+                } elseif ($entity) {
+                    return $entity;
+                }
+            }
         }
 
-        if (!$entity instanceof Entity && !$this->transactionRemoveStorage->get($className, $id)) {
+        if (!$entity instanceof Entity) {
             $entity = $this->storage->get($className, $id);
         }
 
@@ -95,12 +112,17 @@ class IdentityMap implements IdentityMapInterface, TransactionEngineInterface
         }
 
         $entities = [];
-        if ($this->isTransaction()) {
-            $entities = $this->transactionAddStorage->getM($className, $ids);
-        }
-
         $keysFromCache = array_merge($ids);
-        $keysFromCache = array_diff($keysFromCache, array_keys($this->transactionRemoveStorage->getM($className)));
+        if ($this->isTransaction()) {
+            for ($depth = $this->transactionDepth; $depth > 0; $depth--) {
+                $transactionLevelEntities = $this->transactionAddStoragesContainer[$depth - 1]->getM($className, $ids);
+                foreach ($this->transactionRemoveStoragesContainer[$depth - 1]->getM($className, $ids) as $entity) {
+                    unset($transactionLevelEntities[$entity->getId()]);
+                }
+                $keysFromCache = array_diff($keysFromCache, array_keys($transactionLevelEntities));
+                $entities[] = $transactionLevelEntities;
+            }
+        }
 
         $entities = array_merge($this->storage->getM($className, $keysFromCache), $entities);
 
@@ -118,8 +140,8 @@ class IdentityMap implements IdentityMapInterface, TransactionEngineInterface
         if ($this->isEnabled) {
 
             if ($this->isTransaction()) {
-                $this->transactionRemoveStorage->put($entity);
-                $this->transactionAddStorage->remove(get_class($entity), $entity->getId());
+                $this->transactionRemoveStoragesContainer[$this->transactionDepth - 1]->put($entity);
+                $this->transactionAddStoragesContainer[$this->transactionDepth - 1]->remove(get_class($entity), $entity->getId());
             } else {
                 $this->storage->remove(get_class($entity), $entity->getId());
             }
@@ -157,14 +179,10 @@ class IdentityMap implements IdentityMapInterface, TransactionEngineInterface
      */
     public function beginTransaction()
     {
-        if ($this->isTransaction) {
-            throw new TransactionException('Transaction already started');
-        }
+        $this->transactionAddStoragesContainer[] = clone $this->transactionAddStorage;
+        $this->transactionRemoveStoragesContainer[] = clone $this->transactionRemoveStorage;
 
-        $this->transactionAddStorage->flush();
-        $this->transactionRemoveStorage->flush();
-
-        $this->isTransaction = true;
+        $this->transactionDepth++;
     }
 
     /**
@@ -172,30 +190,36 @@ class IdentityMap implements IdentityMapInterface, TransactionEngineInterface
      */
     public function commitTransaction()
     {
-        if (!$this->isTransaction) {
+        if (!$this->isTransaction()) {
             throw new TransactionException('Transaction already stopped');
         }
+        $transactionRemoveStorage = array_pop($this->transactionRemoveStoragesContainer);
+        $transactionAddStorage = array_pop($this->transactionAddStoragesContainer);
+        $this->transactionDepth--;
 
         /** @var string $className */
-        foreach ($this->transactionRemoveStorage->getClassNames() as $className) {
+        foreach ($transactionRemoveStorage->getClassNames() as $className) {
             /** @var Entity $entity */
-            foreach ($this->transactionRemoveStorage->getM($className) as $entity) {
-                $this->storage->remove($className, $entity->getId());
+            foreach ($transactionRemoveStorage->getM($className) as $entity) {
+                if ($this->transactionDepth === 0) {
+                    $this->storage->remove($className, $entity->getId());
+                } else {
+                    $this->transactionAddStoragesContainer[$this->transactionDepth - 1]->remove($className, $entity->getId());
+                }
             }
         }
 
         /** @var string $className */
-        foreach ($this->transactionAddStorage->getClassNames() as $className) {
+        foreach ($transactionAddStorage->getClassNames() as $className) {
             /** @var Entity $entity */
-            foreach ($this->transactionAddStorage->getM($className) as $entity) {
-                $this->storage->put($entity);
+            foreach ($transactionAddStorage->getM($className) as $entity) {
+                if ($this->transactionDepth === 0) {
+                    $this->storage->put($entity);
+                } else {
+                    $this->transactionAddStoragesContainer[$this->transactionDepth - 1]->put($entity);
+                }
             }
         }
-
-        $this->transactionAddStorage->flush();
-        $this->transactionRemoveStorage->flush();
-
-        $this->isTransaction = false;
     }
 
     /**
@@ -203,31 +227,35 @@ class IdentityMap implements IdentityMapInterface, TransactionEngineInterface
      */
     public function rollbackTransaction()
     {
-        if (!$this->isTransaction) {
+        if (!$this->isTransaction()) {
             throw new TransactionException('Transaction already stopped');
         }
+        $lastTransactionRemoveStorage = array_pop($this->transactionRemoveStoragesContainer);
+        $lastTransactionAddStorage = array_pop($this->transactionAddStoragesContainer);
+        $this->transactionDepth--;
 
 	// remove all data that was changed during transaction from storage
+        $changedData = array_merge(
+            $lastTransactionAddStorage->getClassNames(),
+            $lastTransactionRemoveStorage->getClassNames()
+        );
         /** @var string $className */
-        foreach ($this->transactionRemoveStorage->getClassNames() as $className) {
-            /** @var Entity $entity */
-            foreach ($this->transactionRemoveStorage->getM($className) as $entity) {
-                $this->storage->remove($className, $entity->getId());
+        foreach ($changedData as $className) {
+            foreach ($this->transactionRemoveStoragesContainer as $key => $transactionRemoveStorage) {
+                /** @var Entity $entity */
+                foreach ($transactionRemoveStorage->getM($className) as $entity) {
+                    $this->storage->remove($className, $entity->getId());
+                    $this->transactionRemoveStoragesContainer[$key]->remove($className, $entity->getId());
+                }
+            }
+            foreach ($this->transactionAddStoragesContainer as $key => $transactionAddStorage) {
+                /** @var Entity $entity */
+                foreach ($transactionAddStorage->getM($className) as $entity) {
+                    $this->storage->remove($className, $entity->getId());
+                    $this->transactionAddStoragesContainer[$key]->remove($className, $entity->getId());
+                }
             }
         }
-
-        /** @var string $className */
-        foreach ($this->transactionAddStorage->getClassNames() as $className) {
-            /** @var Entity $entity */
-            foreach ($this->transactionAddStorage->getM($className) as $entity) {
-                $this->storage->remove($className, $entity->getId());
-            }
-        }
-
-        $this->transactionAddStorage->flush();
-        $this->transactionRemoveStorage->flush();
-
-        $this->isTransaction = false;
     }
 
     /**
@@ -235,6 +263,6 @@ class IdentityMap implements IdentityMapInterface, TransactionEngineInterface
      */
     public function isTransaction()
     {
-        return $this->isTransaction;
+        return $this->transactionDepth > 0;
     }
 }

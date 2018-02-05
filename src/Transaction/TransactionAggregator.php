@@ -37,9 +37,6 @@ class TransactionAggregator implements TransactionEngineInterface
      */
     public function beginTransaction()
     {
-        if ($this->state === true) {
-            throw new TransactionException("Can't begin transaction while another one is running");
-        }
 
         /** Begin transaction on every registered engine */
         foreach ($this->engines as $engine) {

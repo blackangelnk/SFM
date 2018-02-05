@@ -207,11 +207,13 @@ class IdentityMapTransactionTest extends PHPUnit_Framework_TestCase
 
     public function testBeginTwice()
     {
-        $this->setExpectedException('SFM\Transaction\TransactionException', "Transaction already started");
-
         $im = new IdentityMap(new \SFM\IdentityMap\IdentityMapStorage(), new \SFM\IdentityMap\IdentityMapStorage(), new \SFM\IdentityMap\IdentityMapStorage());
-        $im->beginTransaction();
-        $im->beginTransaction();
+        try {
+            $im->beginTransaction();
+            $im->beginTransaction();
+        } catch (\SFM\Transaction\TransactionException $exception) {
+            $this->fail("Failed to begin nested transaction ");
+        }
     }
 
     public function testRollbackTwice()
