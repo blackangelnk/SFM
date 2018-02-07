@@ -116,11 +116,11 @@ class IdentityMap implements IdentityMapInterface, TransactionEngineInterface
         if ($this->isTransaction()) {
             for ($depth = $this->transactionDepth; $depth > 0; $depth--) {
                 $transactionLevelEntities = $this->transactionAddStoragesContainer[$depth - 1]->getM($className, $ids);
+                $keysFromCache = array_diff($keysFromCache, array_keys($transactionLevelEntities));
                 foreach ($this->transactionRemoveStoragesContainer[$depth - 1]->getM($className, $ids) as $entity) {
                     unset($transactionLevelEntities[$entity->getId()]);
                 }
-                $keysFromCache = array_diff($keysFromCache, array_keys($transactionLevelEntities));
-                $entities[] = $transactionLevelEntities;
+                $entities = array_merge($entities, $transactionLevelEntities);
             }
         }
 
