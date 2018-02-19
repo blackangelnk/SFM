@@ -9,12 +9,6 @@ namespace SFM\Transaction;
 class TransactionAggregator implements TransactionEngineInterface
 {
     /**
-     * Transaction current state
-     * @var bool
-     */
-    protected $state = false;
-
-    /**
      * @var TransactionEngineInterface[]
      */
     protected $engines = array();
@@ -55,9 +49,6 @@ class TransactionAggregator implements TransactionEngineInterface
                 throw new TransactionException(sprintf("Can't begin transaction on `%s` engine", get_class($engine)), 0, $exception);
             }
         }
-
-        // transaction started
-        $this->state = true;
     }
 
     /**
@@ -65,30 +56,14 @@ class TransactionAggregator implements TransactionEngineInterface
      */
     public function commitTransaction()
     {
-        if ($this->state === false) {
+        if ($this->isTransaction() === false) {
             throw new TransactionException("Can't commit transaction while there is no transaction running");
         }
 
         /** Begin transaction on every registered engine */
         foreach ($this->engines as $i => $engine) {
-            $isActive = null;
-            $exception = null;
-            try {
-                $engine->commitTransaction();
-                $isActive = $engine->isTransaction();
-            } catch (TransactionException $e) {
-                $isActive = true;
-                $exception = $e;
-            }
-
-            if (true === $isActive) {
-                // TODO: flush started
-                throw new TransactionException(sprintf("Can't commit transaction on `%s` engine", get_class($engine)), 0, $exception);
-            }
+            $engine->commitTransaction();
         }
-
-        // transaction commited
-        $this->state = false;
     }
 
     /**
@@ -96,30 +71,14 @@ class TransactionAggregator implements TransactionEngineInterface
      */
     public function rollbackTransaction()
     {
-        if ($this->state === false) {
+        if ($this->isTransaction() === false) {
             throw new TransactionException("Can't rollback transaction while there is no transaction running");
         }
 
         /** Begin transaction on every registered engine */
         foreach ($this->engines as $i => $engine) {
-            $isActive = null;
-            $exception = null;
-            try {
-                $engine->rollbackTransaction();
-                $isActive = $engine->isTransaction();
-            } catch (TransactionException $e) {
-                $isActive = true;
-                $exception = $e;
-            }
-
-            if (true === $isActive) {
-                // TODO: flush started
-                throw new TransactionException(sprintf("Can't rollback transaction on `%s` engine", get_class($engine)), 0, $exception);
-            }
+            $engine->rollbackTransaction();
         }
-
-        // transaction rolled back
-        $this->state = false;
     }
 
     /**
@@ -138,7 +97,7 @@ class TransactionAggregator implements TransactionEngineInterface
             // get state by first engine
             if ($isTransactionStarted === null) {
                 $isTransactionStarted = $isTransaction;
-            // all other must be in sync
+                // all other must be in sync
             } else if ($isTransaction !== $isTransactionStarted) {
                 throw new TransactionException(sprintf("Transaction engine `%s` is desynchronized from other last engine", get_class($engine)));
             }

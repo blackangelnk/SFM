@@ -14,6 +14,11 @@ use SFM\BaseException;
 class DatabaseProvider implements TransactionEngineInterface
 {
     /**
+     * Nested transactino savepoint name prefix
+     */
+    const TRANSACTION_SAVEPOINT_NAME = 'transaction_';
+
+    /**
      * @var Adapter
      */
     protected $adapter = null;
@@ -228,7 +233,15 @@ class DatabaseProvider implements TransactionEngineInterface
     public function beginTransaction()
     {
         try {
-            $this->adapter->getDriver()->getConnection()->beginTransaction();
+            if ($this->getAdapter()->getPlatform() instanceof Postgresql) {
+                if ($this->transactionDepth === 0) {
+                    $this->adapter->getDriver()->getConnection()->beginTransaction();
+                } else {
+                    $this->query('SAVEPOINT ' . static::TRANSACTION_SAVEPOINT_NAME . $this->transactionDepth . ';', []);
+                }
+            } else {
+                $this->adapter->getDriver()->getConnection()->beginTransaction();
+            }
             $this->transactionDepth++;
         } catch (\Exception $e) {
             throw new TransactionException('Can`t begin transaction', 0, $e);
@@ -253,7 +266,15 @@ class DatabaseProvider implements TransactionEngineInterface
         }
 
         try {
-            $this->adapter->getDriver()->getConnection()->commit();
+            if ($this->getAdapter()->getPlatform() instanceof Postgresql) {
+                if ($this->transactionDepth === 1) {
+                    $this->adapter->getDriver()->getConnection()->commit();
+                } else {
+                    $this->query('RELEASE SAVEPOINT ' . static::TRANSACTION_SAVEPOINT_NAME . ($this->transactionDepth - 1) . ';', []);
+                }
+            } else {
+                $this->adapter->getDriver()->getConnection()->commit();
+            }
             $this->transactionDepth--;
         } catch (\Exception $e) {
             throw new TransactionException('Can`t commit transaction', 0, $e);
@@ -270,7 +291,15 @@ class DatabaseProvider implements TransactionEngineInterface
         }
 
         try {
-            $this->adapter->getDriver()->getConnection()->rollBack();
+            if ($this->getAdapter()->getPlatform() instanceof Postgresql) {
+                if ($this->transactionDepth === 1) {
+                    $this->adapter->getDriver()->getConnection()->rollBack();
+                } else {
+                    $this->query('ROLLBACK TO SAVEPOINT ' . static::TRANSACTION_SAVEPOINT_NAME . ($this->transactionDepth - 1) . ';', []);
+                }
+            } else {
+                $this->adapter->getDriver()->getConnection()->rollBack();
+            }
             $this->transactionDepth--;
         } catch (\Exception $e) {
             throw new TransactionException("Can`t rollback transaction", 0, $e);
